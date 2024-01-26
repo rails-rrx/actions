@@ -1,0 +1,102 @@
+name: rails-rrx-docker
+description: Build a Ruby on Rails docker image
+author: Dan Drew
+
+inputs:
+  repository:
+    description: 'Private docker repository'
+  username:
+    description: 'Repository or Docker Hub username'
+    required: true
+  password:
+    description: 'Repository or Docker Hub password/token'
+    required: true
+  image_name:
+    description: 'Name of Docker image to create'
+    required: true
+  image_version:
+    description: 'Version of Docker image'
+    required: true
+  environment:
+    description: 'Tag image for a deployment environment'
+    required: false
+  latest:
+    description: 'Tag image as latest'
+    required: false
+    default: 'false'
+  ruby_version:
+    description: 'Ruby version'
+    default: '3.2.1'
+
+runs:
+  using: composite
+  steps:
+    - name: Get Bundler version
+      id: bundler_version
+      shell: bash
+      run: echo "version=`grep -F 'BUNDLED' -A 1 Gemfile.lock | grep -Eo '[\.0-9]+'`" > $GITHUB_OUTPUT
+#      run: |
+#        set -x
+#        readonly data=$( grep -F 'BUNDLED' -A 1 Gemfile.lock | tail -n1 )
+#        readonly version=${data##*([:blank:])}
+#        echo version=${version} > $GITHUB_OUTPUT
+
+    - name: Create Dockerfile
+      run: cp '${{ github.action_path }}/Dockerfile' rrx.Dockerfile
+      shell: bash
+
+    - id: full_name
+      shell: bash
+      run: echo 'value=${{ format('{0}{1}{2}', inputs.repository || '', inputs.repository && '/' || '', inputs.image_name) }}' > $GITHUB_OUTPUT
+
+    -
+      name: Build
+      id: build
+      shell: bash
+      run: |
+        set -x
+        readonly full_name='${{ format('{0}{1}{2}', inputs.repository || '', inputs.repository && '/' || '', inputs.image_name) }}'
+        readonly image_version=${{ inputs.image_version }}
+        readonly full_tag="${full_name}:${image_version}"
+        readonly ruby_version=${{ inputs.ruby_version }}
+        readonly bundler_version=${{ steps.bundler_version.outputs.version }}
+
+        if [[ -z "${image_version}" ]] || [[ -z "${ruby_version}" ]] || [[ -z "${bundler_version}" ]]; then
+          echo Missing required version info
+          exit 1
+        fi
+
+        echo "full_name=${full_name}" > $GITHUB_OUTPUT
+        echo "full_tag=${full_tag}" >> $GITHUB_OUTPUT
+
+        declare args=(
+          "--build-arg" "RUBY_VERSION=${ruby_version}"
+          "--build-arg" "BUILD_BUNDLER_VERSION=${bundler_version}"
+          "--file" "rrx.Dockerfile"
+          "--tag" "${full_name}:${image_version}"
+          "--metadata-file" "docker-metadata.json"
+        )
+
+        if [[ 1 == ${{ inputs.environment && 1 || 0 }} ]]; then
+          args+=("--tag" "${full_name}:${{ inputs.environment }}")
+        fi
+
+        if [[ 1 == ${{ inputs.latest && 1 || 0 }} ]]; then
+          args+=("--tag" "${full_name}:latest")
+        fi
+
+        docker image build ${args[*]} .
+        docker image ls ${full_name}
+
+    -
+      name: Login to Repository
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ inputs.repository }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+
+    -
+      name: Push
+      shell: bash
+      run: docker push -q -a ${{ steps.build.outputs.full_name }}

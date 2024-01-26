@@ -1,0 +1,91 @@
+name: rrx-test
+description: Run Ruby tests and report
+author: Dan Drew
+
+inputs:
+  ruby_version:
+    default: '3.2.1'
+    description: 'Ruby version'
+  database:
+    description: 'Type of database to ensure correct tools are installed (mysql, mariadb, postgres)'
+    default: none
+  rubocop:
+    default: 'true'
+    description: 'Set to false to disable Rubocop linting'
+  fail_on_rubocop:
+    default: 'false'
+    description: 'Set to to true to fail the build if there are Rubocop violations'
+
+runs:
+  using: composite
+  steps:
+    - name: Install dependencies
+      shell: bash
+      run: |
+        sudo apt-get -qq update
+        case '${{ inputs.database }}' in
+          none)
+            ;;
+          mysql)
+            ;;
+          mariadb)
+            sudo apt-get -qq remove mysql-client
+            sudo apt-get -qq install mariadb-client
+            ;;
+          postgres)
+            echo TODO
+            ;;
+          *)
+            echo 'Unsupported DB type!'
+            exit 1
+            ;;
+        esac
+    - uses: ruby/setup-ruby@ec02537da5712d66d4d50a0f33b7eb52773b5ed1
+      with:
+        ruby-version: "${{ inputs.ruby_version }}"
+    - run: bundle install
+      shell: bash
+    - run: bundle add rspec_junit_formatter
+      shell: bash
+    - name: Start database
+      run: bin/db
+      shell: bash
+      if: ${{ inputs.database }} != 'none'
+    - shell: bash
+      run: mkdir -p tmp
+
+    - name: Tests
+      shell: bash
+      run: bin/rspec --format progress --format RspecJunitFormatter --out 'tmp/rspec-xunit.xml' spec/
+
+    - name: Rubocop
+      run: bin/rubocop -f junit --display-only-failed -o 'tmp/rubocop-xunit.xml'
+      shell: bash
+      if: ${{ inputs.rubocop == 'true' }}
+      continue-on-error: ${{ inputs.fail_on_rubocop == 'false' }}
+
+    - uses: actions/upload-artifact@v4
+      if: success() || failure()
+      with:
+        name: rspec-results
+        path: tmp/rspec-xunit.xml
+        if-no-files-found: warn
+        retention-days: 3
+        overwrite: true
+
+    - uses: actions/upload-artifact@v4
+      if: success() || failure()
+      with:
+        name: rubocop-results
+        path: tmp/rubocop-xunit.xml
+        if-no-files-found: warn
+        retention-days: 3
+        overwrite: true
+
+    - name: Test Report
+      uses: dorny/test-reporter@v1
+      if: success() || failure()
+      with:
+        name: Test Results
+        path: tmp/rspec-xunit.xml
+        reporter: java-junit
