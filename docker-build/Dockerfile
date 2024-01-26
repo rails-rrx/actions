@@ -5,10 +5,11 @@ FROM ${BASE_IMAGE}:${BUILD_RUBY_VERSION} AS base
 
 ARG BUILD_GEM_VERSION=3.3.5
 ARG BUILD_BUNDLER_VERSION=2.3.5
+ARG APT_PACKAGES=
 
 RUN apt-get update -yqq \
         && apt-get install -y apt-utils \
-        && apt-get install -y curl
+        && apt-get install -y curl ${APT_PACKAGES}
 
 #        && apt-get update -y \
 #        && apt-get install -y netcat \
@@ -40,3 +41,7 @@ COPY . ${APP_ROOT}/
 
 # Puma support
 RUN mkdir -p ${APP_ROOT}/tmp/pids
+
+ENV RAILS_ENV=production
+EXPOSE 3000
+ENTRYPOINT ["/bin/bash", "docker/startup.sh"]
